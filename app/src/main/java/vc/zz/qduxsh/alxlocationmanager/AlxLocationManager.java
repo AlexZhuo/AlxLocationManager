@@ -80,6 +80,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
     public STATUS currentStatus = STATUS.NOT_CONNECT;
     public float accuracy = 99999;//没有获得精度的时候是-1
     private Timer locationTimer;
+    public String dataJson;//发送给谷歌API的WiFi和基站数据
 
 
     public enum STATUS{
@@ -91,6 +92,9 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
 
     public final static boolean isDebugging = true;//是否显示toast开关
 
+    public static AlxLocationManager getInstance(){
+        return manager;
+    }
     /**
      * 注册gps监听服务
      * @param context
@@ -472,7 +476,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
                 if(infos.size()==0)return cellInfo;
                 towers = new ArrayList<>(infos.size());
                 for (CellInfo i : infos) { // 根据邻区总数进行循环
-                    Log.i("AlexLocation", "附近基站信息是" + i.toString());
+                    Log.i("AlexLocation", "附近基站信息是" + i.toString());//这里如果出现很多cid
                     GoogleCellTower tower = new GoogleCellTower();
                     if(i instanceof CellInfoGsm){//这里的塔分为好几种类型
                         Log.i("AlexLocation","现在是gsm基站");
@@ -655,10 +659,10 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
         if(info==null)return null;
         switch (info.getSubtype()){
             case TelephonyManager.NETWORK_TYPE_LTE:
-                Log.i("AlexLocation","手机制式是lte");
+                Log.i("AlexLocation","手机信号是lte");
                 return "LTE";
             case TelephonyManager.NETWORK_TYPE_EDGE:
-                Log.i("AlexLocation","手机制式是edge");
+                Log.i("AlexLocation","手机信号是edge");
                 return "EDGE";
             case TelephonyManager.NETWORK_TYPE_CDMA:
                 return "CDMA";
@@ -1052,6 +1056,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
      * @return
      */
     public void sendJsonByPost(String json, String url){
+        this.dataJson = json;
         RequestParams params = new RequestParams();
         params.applicationJson(JSON.parseObject(json));
         HttpRequest.post(url, params, new BaseHttpRequestCallback<String>(){
@@ -1221,5 +1226,5 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
           if (lat < 0.8293 || lat > 55.8271)
                   return true;
           return false;
-       }
+    }
 }
