@@ -6,6 +6,8 @@ package vc.zz.qduxsh.alxlocationmanager;
 public class MyLocation {
     public double latitude;
     public double longitude;
+    public long updateTime;//最后更新时间，用于做精确度择优
+    public float accuracy;
     private static MyLocation myLocation;
     MyLocation(){}
 

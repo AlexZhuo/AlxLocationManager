@@ -2,6 +2,7 @@ package vc.zz.qduxsh.alxlocationmanager;
 
 import android.app.Application;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.location.Location;
 import android.net.ConnectivityManager;
@@ -45,9 +46,10 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import cn.finalteam.okhttpfinal.BaseHttpRequestCallback;
-import cn.finalteam.okhttpfinal.HttpCycleContext;
 import cn.finalteam.okhttpfinal.HttpRequest;
 import cn.finalteam.okhttpfinal.RequestParams;
 
@@ -61,10 +63,10 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
 
     //下面这三个是没拿到第一次经纬度的时候耗电抓取经纬度的策略
 
-    private static final int MAX_deviation = 100;
-    private static final int FAST_UPDATE_INTERVAL = 10000; // 10 sec 平均更新时间
+    private static final int MAX_deviation = 60;//最小精确度限制
+    public static final int FAST_UPDATE_INTERVAL = 10000; // 10 sec 平均更新时间,同时也是没有获取成功的刷新间隔，是耗电量的重要参数
     private static final int FATEST_INTERVAL = 5000; // 5 sec 最短更新时间
-    private static final int FAST_DISPLACEMENT = 1; // 1 meters 为最小侦听距离
+    public static final int FAST_DISPLACEMENT = 10; // 10 meters 为最小侦听距离
 
     //下面这个是省电抓取经纬度的策略
     private static final int SLOW_UPDATE_INTERVAL = 60000; // 60 sec 平均更新时间
@@ -77,8 +79,8 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
 
     public STATUS currentStatus = STATUS.NOT_CONNECT;
     public float accuracy = 99999;//没有获得精度的时候是-1
-    public double lastLatitude;
-    public double lastLongitude;
+    private Timer locationTimer;
+
 
     public enum STATUS{
         NOT_CONNECT,//没有连接相关硬件成功
@@ -103,14 +105,20 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
                 .addOnConnectionFailedListener(manager)
                 .addApi(LocationServices.API)
                 .build();
-        manager.mGoogleApiClient.connect();
+//        manager.mGoogleApiClient.connect();
         new Handler().postDelayed(new Runnable() {
             @Override
             public void run() {
                 if(manager!=null && manager.currentStatus!= STATUS.NOT_CONNECT)return;//如果连接GPS硬件到9s后还没成功
                 Log.i("AlexLocation","该手机没有安装谷歌框架服务,使用Android原生获取吧");
                 Toast.makeText(manager.context,"警告：你没有安装谷歌服务框架，请root后安装",Toast.LENGTH_LONG).show();
-//                manager.context.startService(new Intent(manager.context, LocationUpdateService.class));//使用安卓原生API获取地理位置
+                context.startService(new Intent(manager.context, AlxLocationService.class));
+                if(manager.locationTimer==null)manager.locationTimer = new Timer();
+                try {
+                    manager.locationTimer.scheduleAtFixedRate(new LocationTask(),0,FAST_UPDATE_INTERVAL);//10s获取一次
+                }catch (Exception e){
+                    Log.i("AlexLocation","开启locationtask出现异常",e);
+                }
                 new AlxAsynTask<Void,Void,String>(){//在子线程中获取附近的基站和wifi信息
 
                     @Override
@@ -127,7 +135,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
                         }
                         getWifiInfo(manager.context, geoLocationAPI);
                         String json = geoLocationAPI.toJson();//这里使用gson.toJson()会被混淆，推荐使用手动拼json
-                        Log.i("AlexLocation","准备发给goggle的json是"+json);
+                        Log.i("AlexLocation","准备发给google的json是"+json);
                         return json;
                     }
 
@@ -142,6 +150,16 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
                 }.executeDependSDK();
             }
         },9000);
+    }
+
+    public static class LocationTask extends TimerTask {
+
+        @Override
+        public void run() {
+            Log.i("AlexLocation","location task 执行"+"manager是"+manager+"    destroy是"+AlxLocationService.isDestory);
+            if(manager==null || !AlxLocationService.isDestory)return;//如果之前被destroy了，就重开一个
+            manager.context.startService(new Intent(manager.context, AlxLocationService.class));//使用安卓原生API获取地理位置
+        }
     }
 
     /**
@@ -241,13 +259,13 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
         float speed = mLastLocation.getSpeed();//速度
         if(isDebugging)Toast.makeText(context,"获取到last location经纬度  "+"纬度"+latitude+"  经度"+longitude+ "精确度"+last_accuracy,Toast.LENGTH_LONG).show();
         Log.i("AlexLocation","获取last location成功，纬度=="+latitude+"  经度"+longitude+"  海拔"+altitude+"   传感器"+provider+"   速度"+speed+ "精确度"+last_accuracy);
-        if(last_accuracy<MAX_deviation){
+        if(last_accuracy < MAX_deviation){
             recordLocation(context,latitude,longitude,accuracy);
             this.accuracy = last_accuracy;
         }else {
             Log.i("AlexLocation","精确度太低，放弃last Location");
         }
-        return last_accuracy<60;
+        return last_accuracy < MAX_deviation;
     }
 
     @Override
@@ -265,7 +283,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
         Log.i("AlexLocation","位置改变了"+location);
         if(location==null)return;
         if(isDebugging) Toast.makeText(context,"获取到了最新的GPS    "+location.toString()+" 精度是"+location.getAccuracy(),Toast.LENGTH_LONG).show();
-        if(location.getAccuracy()<MAX_deviation && (location.getAccuracy()<=accuracy || getGPSDistance(location.getLatitude(),location.getLongitude(),lastLatitude,lastLongitude)>300)){//精度如果太小就放弃,如果精度提高或者移动的距离超过300m也更新
+        if(location.getAccuracy() < MAX_deviation ){//精度如果太小就放弃
             recordLocation(context,location.getLatitude(),location.getLongitude(),location.getAccuracy());
             this.accuracy = location.getAccuracy();
         }else {
@@ -327,12 +345,18 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
         editor.putString("longitude", String.valueOf(longitude));
         editor.putFloat("accuracy",accuracy);
         editor.apply();
-        if(isDebugging)Toast.makeText(context,"最终经过火星转换的结果是latitude="+latitude+"   longitude="+longitude,Toast.LENGTH_LONG).show();
-        MyLocation.getInstance().latitude = latitude;
-        MyLocation.getInstance().longitude = longitude;
-        if(manager==null)return;
-        manager.lastLatitude = latitude;
-        manager.lastLongitude = longitude;
+        Log.i("AlexLocation","最终经过火星转换的结果是latitude="+latitude+"   longitude="+longitude+"   accuracy="+accuracy);
+        MyLocation myLocationStatic = MyLocation.getInstance();
+        //当以前没有记录，或者30s内连续获取的数据（Google的数据，手机自带GPS返回的数据）根据accuracy择优录取
+        if(myLocationStatic.updateTime == 0 || System.currentTimeMillis() - myLocationStatic.updateTime > SLOW_INTERVAL || accuracy <= myLocationStatic.accuracy) {
+            myLocationStatic.latitude = latitude;
+            myLocationStatic.longitude = longitude;
+            myLocationStatic.accuracy = accuracy;
+            myLocationStatic.accuracy = System.currentTimeMillis();
+            if(isDebugging)Toast.makeText(context,"最终记录的经过火星转换的结果是latitude="+latitude+"   longitude="+longitude+"   accuracy="+accuracy,Toast.LENGTH_LONG).show();
+        }else {
+            Log.i("AlexLocation","本次位置获取不精确，放弃");
+        }
     }
 
     /**
@@ -632,38 +656,38 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
         switch (info.getSubtype()){
             case TelephonyManager.NETWORK_TYPE_LTE:
                 Log.i("AlexLocation","手机制式是lte");
-                return "lte";
+                return "LTE";
             case TelephonyManager.NETWORK_TYPE_EDGE:
                 Log.i("AlexLocation","手机制式是edge");
-                break;
+                return "EDGE";
             case TelephonyManager.NETWORK_TYPE_CDMA:
-                return "cdma";
+                return "CDMA";
             case TelephonyManager.NETWORK_TYPE_GPRS:
-                break;
+                return "GPRS";
             case TelephonyManager.NETWORK_TYPE_HSDPA:
-                break;
+                return "HSDPA";
             case TelephonyManager.NETWORK_TYPE_HSPA:
-                break;
+                return "HSPA";
             case TelephonyManager.NETWORK_TYPE_HSPAP:
-                break;
+                return "HSPAP";
             case TelephonyManager.NETWORK_TYPE_HSUPA:
-                break;
+                return "HSUPA";
             case TelephonyManager.NETWORK_TYPE_EVDO_0:
-                break;
+                return "EVDO_0";
             case TelephonyManager.NETWORK_TYPE_EVDO_A:
-                break;
+                return "EVDO_A";
             case TelephonyManager.NETWORK_TYPE_EVDO_B:
-                break;
+                return "EVDO_B";
             case TelephonyManager.NETWORK_TYPE_IDEN:
-                break;
+                return "IDEN";
             case TelephonyManager.NETWORK_TYPE_UMTS:
-                break;
+                return "UMTS";
             case TelephonyManager.NETWORK_TYPE_EHRPD:
-                break;
+                return "EHRPD";
             case TelephonyManager.NETWORK_TYPE_1xRTT:
-                break;
+                return "RTT";
             case TelephonyManager.NETWORK_TYPE_UNKNOWN:
-                break;
+                return "UNKNOWN";
         }
         return null;
 
@@ -1028,12 +1052,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
      * @return
      */
     public void sendJsonByPost(String json, String url){
-        RequestParams params = new RequestParams(new HttpCycleContext() {//okhttpfinal框架用于取消下载用的
-            @Override
-            public String getHttpTaskKey() {
-                return "GPS";
-            }
-        });
+        RequestParams params = new RequestParams();
         params.applicationJson(JSON.parseObject(json));
         HttpRequest.post(url, params, new BaseHttpRequestCallback<String>(){
             @Override
