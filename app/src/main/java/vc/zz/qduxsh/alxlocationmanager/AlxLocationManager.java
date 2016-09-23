@@ -356,7 +356,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
             myLocationStatic.latitude = latitude;
             myLocationStatic.longitude = longitude;
             myLocationStatic.accuracy = accuracy;
-            myLocationStatic.accuracy = System.currentTimeMillis();
+            myLocationStatic.updateTime = System.currentTimeMillis();
             if(isDebugging)Toast.makeText(context,"最终记录的经过火星转换的结果是latitude="+latitude+"   longitude="+longitude+"   accuracy="+accuracy,Toast.LENGTH_LONG).show();
         }else {
             Log.i("AlexLocation","本次位置获取不精确，放弃");

@@ -6,6 +6,8 @@ import android.os.Bundle;
 import android.text.TextUtils;
 import android.widget.TextView;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Timer;
 import java.util.TimerTask;
 
@@ -32,6 +34,8 @@ public class MainActivity extends AppCompatActivity {
 
         final TextView tv_latitude = (TextView) findViewById(R.id.tv_latitude);
         final TextView tv_longitude = (TextView) findViewById(R.id.tv_longitude);
+        final TextView tv_accuracy = (TextView) findViewById(R.id.tv_accuracy);
+        final TextView tv_time = (TextView) findViewById(R.id.tv_time);
         final TextView tv_data = (TextView) findViewById(R.id.tv_data);
         final Handler handler = new Handler();
         //每隔2s更新一下经纬度结果
@@ -43,6 +47,8 @@ public class MainActivity extends AppCompatActivity {
                     public void run() {
                         tv_latitude.setText(String.valueOf(MyLocation.getInstance().latitude));
                         tv_longitude.setText(String.valueOf(MyLocation.getInstance().longitude));
+                        tv_accuracy.setText(String.valueOf(MyLocation.getInstance().accuracy));
+                        if(MyLocation.getInstance().updateTime != 0)tv_time.setText(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(MyLocation.getInstance().updateTime)));
                         if(AlxLocationManager.getInstance()==null)return;
                         String json = AlxLocationManager.getInstance().dataJson;
                         if(TextUtils.isEmpty(json))return;
