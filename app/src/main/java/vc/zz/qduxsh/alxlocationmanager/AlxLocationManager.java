@@ -105,7 +105,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
                 .addOnConnectionFailedListener(manager)
                 .addApi(LocationServices.API)
                 .build();
-//        manager.mGoogleApiClient.connect();
+        manager.mGoogleApiClient.connect();
         new Handler().postDelayed(new Runnable() {
             @Override
             public void run() {
