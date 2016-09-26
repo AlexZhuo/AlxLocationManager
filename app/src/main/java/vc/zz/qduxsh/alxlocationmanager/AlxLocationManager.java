@@ -60,15 +60,16 @@ import cn.finalteam.okhttpfinal.RequestParams;
 public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,GoogleApiClient.OnConnectionFailedListener,LocationListener {
     public static final String GOOGLE_API_KEY = "AIzaSyDLToSD04V2ylySZaswsUWZX9s-WCGDx5g";
     public static final boolean autoChina = true;//中国境内的坐标是否自动转换成火星坐标系
+    public static final boolean isGeoApp = true;//当前APP对GPS要求高不高，普通APP只需要了解大概位置的话应填false，对位置要求严格的APP比如地图的话填true
 
     //下面这三个是没拿到第一次经纬度的时候耗电抓取经纬度的策略
 
-    private static final int MAX_deviation = 60;//最小精确度限制
-    public static final int FAST_UPDATE_INTERVAL = 10000; // 10 sec 平均更新时间,同时也是没有获取成功的刷新间隔，是耗电量的重要参数
+    private static final int MAX_deviation = isGeoApp?60:100;//首次获取最小精确度限制
+    public static final int FAST_UPDATE_INTERVAL = isGeoApp?10000:20000; // 10 sec 平均更新时间,同时也是没有获取成功的刷新间隔，是耗电量的重要参数，普通APP 20s,敏感型10s
     private static final int FATEST_INTERVAL = 5000; // 5 sec 最短更新时间
-    public static final int FAST_DISPLACEMENT = 10; // 10 meters 为最小侦听距离
+    public static final int FAST_DISPLACEMENT = isGeoApp?1:10; // 10 meters 为最小侦听距离,如果当前APP位置敏感，那就填1m
 
-    //下面这个是省电抓取经纬度的策略
+    //下面这个是省电抓取经纬度的策略,敏感型APP不会开启省电策略
     private static final int SLOW_UPDATE_INTERVAL = 60000; // 60 sec 平均更新时间
     private static final int SLOW_INTERVAL = 30000; // 30 sec 最短更新时间
     private static final int SLOW_DISPLACEMENT = 500; // 500 meters 为最小侦听距离
@@ -78,7 +79,6 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
     public static AlxLocationManager manager;//单例模式
 
     public STATUS currentStatus = STATUS.NOT_CONNECT;
-    public float accuracy = 99999;//没有获得精度的时候是-1
     private Timer locationTimer;
     public String dataJson;//发送给谷歌API的WiFi和基站数据
 
@@ -113,7 +113,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
         new Handler().postDelayed(new Runnable() {
             @Override
             public void run() {
-                if(manager!=null && manager.currentStatus!= STATUS.NOT_CONNECT)return;//如果连接GPS硬件到9s后还没成功
+                if(manager == null || manager.context == null || manager.currentStatus != STATUS.NOT_CONNECT)return;//如果连接GPS硬件到9s后还没成功
                 Log.i("AlexLocation","该手机没有安装谷歌框架服务,使用Android原生获取吧");
                 Toast.makeText(manager.context,"警告：你没有安装谷歌服务框架，请root后安装",Toast.LENGTH_LONG).show();
                 context.startService(new Intent(manager.context, AlxLocationService.class));
@@ -211,37 +211,51 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
             //如果没有成功拿到当前经纬度，那么就通过实时位置监听去不断的拿，直到拿到为止
             //如果没有拿到经纬度，就一直监听
             LocationServices.FusedLocationApi.requestLocationUpdates(mGoogleApiClient, createFastLocationRequest(), this);//创建位置监听
-            new AlxAsynTask<Void,Void,String>(){//在子线程中获取附近的基站和wifi信息
+            new TowerAndWiFiTask().executeDependSDK();
+        }else if(isGeoApp){
+            //@对位置准确度要求高，希望一直跟踪位置的APP
+            LocationServices.FusedLocationApi.requestLocationUpdates(mGoogleApiClient, createFastLocationRequest(), this);//创建位置监听
+            new TowerAndWiFiTask().executeDependSDK();
+            Toast.makeText(manager.context,"成功获取到了上次的经纬度，并进行跟踪",Toast.LENGTH_LONG).show();
+            Log.i("AlexLocation","成功获取到了上次的经纬度，并进行跟踪");
 
-                @Override
-                protected String doInBackground(Void... params) {
-                    GeoLocationAPI geoLocationAPI = null;
-                    try {
-                        geoLocationAPI = getCellInfo(context);//得到基站信息,通过基站进行定位
-                    }catch (Exception e){
-                        Log.i("AlexLocation","获取附近基站信息出现异常",e);
-                    }
-                    if(geoLocationAPI ==null){
-                        Log.i("AlexLocation","获取基站信息失败");
-                        return "{}";
-                    }
-                    getWifiInfo(context, geoLocationAPI);
-                    String json = geoLocationAPI.toJson();//这里使用gson.toJson()会被混淆，推荐使用手动拼json
-                    Log.i("AlexLocation","准备发给goggle的json是"+json);
-                    return json;
-                }
-
-                @Override
-                protected void onPostExecute(String json) {
-                    super.onPostExecute(json);
-                    //发送json数据到谷歌，等待谷歌返回结果
-                    sendJsonByPost(json,"https://www.googleapis.com/geolocation/v1/geolocate?key="+GOOGLE_API_KEY);
-                    Toast.makeText(context,"恭喜你安装了谷歌框架，发给google api 的json是；："+json,Toast.LENGTH_LONG).show();
-                }
-            }.executeDependSDK();
-
-        }else {//获取了最后一次硬件记录的经纬度，不进行追踪
+        } else {//获取了最后一次硬件记录的经纬度，不进行追踪
+            //在获取最近一次硬件经纬度成功之后要不要开启追踪模式，应该视项目的具体需求而定，如果对定位的准确度要求不是特别高的APP,那么拿到最近一次的定位就不用追踪了，减少耗电
+            //对位置要求不高，要求省电的APP
+            Toast.makeText(manager.context,"成功获取到了上次的经纬度，所以不进行追踪了",Toast.LENGTH_LONG).show();
+            Log.i("AlexLocation","成功获取到了上次的经纬度，所以不进行追踪了");
             currentStatus = STATUS.NOT_TRACK;
+        }
+    }
+
+    /**
+     * 在子
+     */
+    class TowerAndWiFiTask extends AlxAsynTask<Void,Void,String>{
+        @Override
+        protected String doInBackground(Void... params) {
+            GeoLocationAPI geoLocationAPI = null;
+            try {
+                geoLocationAPI = getCellInfo(context);//得到基站信息,通过基站进行定位
+            }catch (Exception e){
+                Log.i("AlexLocation","获取附近基站信息出现异常",e);
+            }
+            if(geoLocationAPI ==null){
+                Log.i("AlexLocation","获取基站信息失败");
+                return "{}";
+            }
+            getWifiInfo(context, geoLocationAPI);
+            String json = geoLocationAPI.toJson();//这里使用gson.toJson()会被混淆，推荐使用手动拼json
+            Log.i("AlexLocation","准备发给goggle的json是"+json);
+            return json;
+        }
+
+        @Override
+        protected void onPostExecute(String json) {
+            super.onPostExecute(json);
+            //发送json数据到谷歌，等待谷歌返回结果
+            sendJsonByPost(json,"https://www.googleapis.com/geolocation/v1/geolocate?key="+GOOGLE_API_KEY);
+            Toast.makeText(context,"恭喜你安装了谷歌框架，发给google api 的json是；："+json,Toast.LENGTH_LONG).show();
         }
     }
 
@@ -264,8 +278,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
         if(isDebugging)Toast.makeText(context,"获取到last location经纬度  "+"纬度"+latitude+"  经度"+longitude+ "精确度"+last_accuracy,Toast.LENGTH_LONG).show();
         Log.i("AlexLocation","获取last location成功，纬度=="+latitude+"  经度"+longitude+"  海拔"+altitude+"   传感器"+provider+"   速度"+speed+ "精确度"+last_accuracy);
         if(last_accuracy < MAX_deviation){
-            recordLocation(context,latitude,longitude,accuracy);
-            this.accuracy = last_accuracy;
+            recordLocation(context,latitude,longitude,last_accuracy);
         }else {
             Log.i("AlexLocation","精确度太低，放弃last Location");
         }
@@ -289,11 +302,11 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
         if(isDebugging) Toast.makeText(context,"获取到了最新的GPS    "+location.toString()+" 精度是"+location.getAccuracy(),Toast.LENGTH_LONG).show();
         if(location.getAccuracy() < MAX_deviation ){//精度如果太小就放弃
             recordLocation(context,location.getLatitude(),location.getLongitude(),location.getAccuracy());
-            this.accuracy = location.getAccuracy();
         }else {
             Log.i("Alex","精确度太低，准备放弃最新的位置");
         }
-        if(location.getAccuracy()>50 || currentStatus!= STATUS.TRYING_FIRST)return;//如果现在是高电量模式，那么就停止当前监听，采用低电量监听
+        if(location.getAccuracy() > 50 || currentStatus!= STATUS.TRYING_FIRST || isGeoApp)return;//如果现在是高电量模式，那么就停止当前监听，采用低电量监听
+        //地理位置敏感APP并不会进入低电量模式
         LocationServices.FusedLocationApi.removeLocationUpdates(mGoogleApiClient,this);//成功获取到之后就降低频率来省电
         Log.i("AlexLocation","准备开启省电策略");
         currentStatus = STATUS.LOW_POWER;
@@ -1093,11 +1106,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
                     double google_accuracy = returnJson.getDouble("accuracy");
                     Log.i("AlexLocation","谷歌返回的经纬度是"+latitude+"  :  "+longitute+"  精度是"+google_accuracy);
                     if(isDebugging)Toast.makeText(context,"谷歌返回的经纬度是"+latitude+"  :  "+longitute+"  精度是"+google_accuracy,Toast.LENGTH_LONG).show();
-                    if(currentStatus== STATUS.NOT_CONNECT || google_accuracy<accuracy){
-                        Log.i("Alex","决定采用基站和wifi定位，旧的精确度是"+accuracy);
-                        accuracy = (float) google_accuracy;
-                        recordLocation(context,latitude,longitute,accuracy);//当没有从GPS获取经纬度成功，或者GPS的获取经纬度精确度不高，则使用基站和wifi的结果
-                    }
+                    recordLocation(context,latitude,longitute,(float) google_accuracy);//当没有从GPS获取经纬度成功，或者GPS的获取经纬度精确度不高，则使用基站和wifi的结果
                 } catch (JSONException e) {
                     Log.i("AlexLocation","条件不足，无法确定位置2",e);
                 }
@@ -1112,7 +1121,7 @@ public class AlxLocationManager implements GoogleApiClient.ConnectionCallbacks,G
                 //如果返回值是 400  Bad Request，说明有的必填项没有填
                 Log.i("AlexLocation","失败了"+msg+"   "+errorCode);
                 if(errorCode==0)Log.i("AlexLocation","谷歌没有根据现有条件查询到经纬度");
-                if(isDebugging)Toast.makeText(context,"谷歌查询失败",Toast.LENGTH_LONG).show();
+                if(isDebugging)Toast.makeText(context,"WIFI和基站定位失败，原因没有翻墙或者网络不通",Toast.LENGTH_LONG).show();
             }
         });
     }
